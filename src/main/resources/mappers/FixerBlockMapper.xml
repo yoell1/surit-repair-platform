@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.fixer.block.mapper.FixerBlockMapper">
+
+    <!-- 차단한 고객 목록 조회 (최신 차단순) -->
+    <select id="selectBlockedCustomers" resultType="com.surit.fixer.block.model.dto.FixerBlockDTO">
+        SELECT
+            FB.BLOCK_ID AS blockId,
+            FB.CUSTOMER_NO AS customerNo,
+            U.USER_NAME AS customerName,
+            FB.CREATED_AT AS createdAt
+        FROM FIXER_BLOCK FB
+                 JOIN USERS U ON FB.CUSTOMER_NO = U.USER_NO
+        WHERE FB.FIXER_NO = #{fixerNo}
+        ORDER BY FB.CREATED_AT DESC
+    </select>
+
+    <!-- 차단 해제 (삭제) -->
+    <delete id="deleteBlock">
+        DELETE FROM FIXER_BLOCK
+        WHERE FIXER_NO = #{fixerNo} AND BLOCK_ID = #{blockId}
+    </delete>
+
+</mapper>

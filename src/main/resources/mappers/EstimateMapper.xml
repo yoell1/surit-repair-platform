@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.fixer.estimate.model.mapper.EstimateMapper">
+
+	<!--
+		INSERT ... SELECT ... FROM DUAL WHERE ...  형태.
+
+		VALUES 대신 SELECT 를 쓰면 WHERE 를 붙일 수 있다.
+		조건에 안 맞으면 0건이 들어가고 예외도 안 난다.
+		그래서 서비스에서 반환값이 0인지 확인해야 한다.
+
+		ESTIMATE_ID 는 IDENTITY 라서 컬럼 목록에 넣지 않는다.
+		CREATED_AT 도 DEFAULT SYSDATE 라서 생략.
+	-->
+	<insert id="insertEstimate"
+	        parameterType="com.surit.fixer.estimate.model.dto.EstimateDTO">
+		INSERT INTO ESTIMATES (
+			REQUEST_ID, FIXER_NO, ESTIMATED_PRICE, ESTIMATED_DURATION, CONTENT, STATUS
+		)
+		SELECT #{requestId},
+		       #{fixerNo},
+		       #{estimatedPrice},
+		       #{estimatedDuration},
+		       #{content},
+		       'PENDING'
+		  FROM DUAL
+		 WHERE EXISTS (
+		 		<!--
+		 			아직 기사를 못 정한 접수인가
+		 			(접수대기 REQ_01 / 견적중 REQ_02 / 긴급접수 REQ_99).
+		 			REQ_99 는 2026-09-02 에 추가 — 이게 없으면 긴급 접수는
+		 			목록에 떠도 견적 제출이 0건으로 실패한다.
+		 			RequestMapper 의 목록·상세 조건과 항상 같이 맞춰야 한다.
+		 		-->
+		 		SELECT 1
+		 		  FROM REPAIR_REQUESTS r
+		 		 WHERE r.REQUEST_ID  = #{requestId}
+		 		   AND r.STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+		 	)
+		   AND NOT EXISTS (
+		 		<!-- 같은 접수에 두 번 내지 못하게 -->
+		 		SELECT 1
+		 		  FROM ESTIMATES e
+		 		 WHERE e.REQUEST_ID = #{requestId}
+		 		   AND e.FIXER_NO   = #{fixerNo}
+		 	)
+	</insert>
+
+
+	<select id="countMyEstimate" resultType="int">
+		SELECT COUNT(*)
+		  FROM ESTIMATES
+		 WHERE REQUEST_ID = #{requestId}
+		   AND FIXER_NO   = #{fixerNo}
+	</select>
+
+
+	<!--
+		이미 REQ_02(견적중)면 0건이 되는데, 그건 실패가 아니라
+		"다른 기사가 먼저 견적을 내서 이미 바뀐 상태" 라서 그냥 넘어간다.
+
+		WHERE 를 REQ_01 로만 두는 것은 의도적이다 (2026-09-02).
+		긴급접수(REQ_99)에 견적이 들어와도 REQ_02 로 바꾸지 않는다.
+		바꾸는 순간 "이 접수가 긴급이었다" 는 사실이 사라지기 때문이다.
+		상태 칸이 하나뿐이라 긴급과 진행단계를 동시에 담을 수 없어서,
+		둘 중 잃으면 더 곤란한 쪽(긴급)을 남기는 선택을 했다.
+
+		그 대가로 긴급 접수는 견적이 들어와도 계속 '긴급접수' 로 보인다.
+		목록에 견적 수(ESTIMATE_COUNT)가 함께 나오므로 화면상으로는
+		몇 명이 냈는지 알 수 있지만, 상태만 봐서는 알 수 없다.
+		IS_URGENT 컬럼이 생기면 이 특수 처리는 지우고
+		WHERE STATUS_CODE = 'REQ_01' 하나로 되돌리면 된다.
+	-->
+	<update id="updateRequestToEstimating">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = 'REQ_02'
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND STATUS_CODE = 'REQ_01'
+	</update>
+
+
+	<select id="selectMyEstimates"
+	        resultType="com.surit.fixer.estimate.model.dto.EstimateDTO">
+		SELECT e.ESTIMATE_ID,
+		       e.REQUEST_ID,
+		       e.FIXER_NO,
+		       e.ESTIMATED_PRICE,
+		       e.ESTIMATED_DURATION,
+		       e.CONTENT,
+		       e.STATUS,
+		       e.CREATED_AT,
+		       r.TITLE          AS REQUEST_TITLE,
+		       r.STATUS_CODE    AS REQUEST_STATUS_CODE,
+		       r.SERVICE_ADDRESS,
+		       sc.CODE_NAME     AS REQUEST_STATUS_NAME,
+		       cc.CODE_NAME     AS CATEGORY_NAME,
+		       u.NAME           AS CUSTOMER_NAME
+		  FROM ESTIMATES e
+		  JOIN REPAIR_REQUESTS r ON r.REQUEST_ID = e.REQUEST_ID
+		  JOIN USERS           u ON u.USER_NO    = r.USER_NO
+		  LEFT JOIN COMMON_CODE cc ON cc.CODE_ID = r.CATEGORY_CODE
+		  LEFT JOIN COMMON_CODE sc ON sc.CODE_ID = r.STATUS_CODE
+		 WHERE e.FIXER_NO = #{fixerNo}
+		<!--
+			접수가 이미 끝났는데(수리완료 REQ_04 / 취소됨 REQ_05)
+			내 견적이 SELECTED 가 아니면 = 결과가 이미 나버린 견적이다.
+			이런 건 "내 견적" 목록에서 더 이상 볼 필요가 없어서 뺀다.
+
+			행을 지우는 게 아니라 화면에서만 걸러내는 것이다.
+			ESTIMATES 데이터는 그대로 남아있으니, 나중에 분쟁이나 통계가
+			필요해지면 언제든 DB 에서 확인할 수 있다.
+
+			아직 진행중(REQ_01~REQ_03)이면 결과가 안 나온 거라 계속 보여주고,
+			내가 SELECTED 로 완료된 건(내 성공 사례)도 계속 보여준다.
+
+			REQ_05(취소됨) 를 2026-09-02 에 추가했다.
+			COMMON_CODE 에 취소 상태가 생기면서, 고객이 취소한 접수의 내 견적이
+			계속 "대기중" 으로 남아 답이 안 오는 견적처럼 보이는 문제가 있었다.
+
+			끝난 상태를 IN 목록으로 둔 이유는 앞으로 종료 상태가 더 생겨도
+			이 한 줄에만 추가하면 되게 하기 위해서다.
+			반대로 e.STATUS 는 '= PENDING' 이 아니라 '!= SELECTED' 로 쓴다 —
+			견적 상태가 늘어나도 "선택되지 않았다" 는 판정은 그대로 맞기 때문이다.
+		-->
+		AND NOT (r.STATUS_CODE IN ('REQ_04', 'REQ_05') AND e.STATUS != 'SELECTED')
+		 ORDER BY e.CREATED_AT DESC, e.ESTIMATE_ID DESC
+	</select>
+
+</mapper>

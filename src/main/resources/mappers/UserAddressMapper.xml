@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.user.mapper.UserAddressMapper">
+
+
+	<select id="selectAddressesByUserNo" resultType="com.surit.user.model.dto.UserAddressDTO">
+		SELECT ADDRESS_ID     AS addressId,
+		       USER_NO        AS userNo,
+		       ADDRESS_NAME   AS addressName,
+		       ADDRESS        AS address,
+		       ADDRESS_DETAIL AS addressDetail,
+		       IS_DEFAULT     AS isDefault
+		  FROM USER_ADDRESS
+		 WHERE USER_NO = #{userNo}
+		 ORDER BY DECODE(IS_DEFAULT, 'Y', 0, 1), ADDRESS_ID DESC
+	</select>
+
+	<select id="countByUserNo" resultType="int">
+		SELECT COUNT(*) FROM USER_ADDRESS WHERE USER_NO = #{userNo}
+	</select>
+	
+    <select id="selectAddressById" resultType="com.surit.user.model.dto.UserAddressDTO">
+        SELECT
+            ADDRESS_ID     AS addressId,
+            USER_NO        AS userNo,
+            ADDRESS_NAME   AS addressName,
+            ADDRESS        AS address,
+            ADDRESS_DETAIL AS addressDetail,
+            IS_DEFAULT     AS isDefault
+        FROM USER_ADDRESS
+        WHERE ADDRESS_ID = #{addressId}
+          AND USER_NO = #{userNo}
+    </select>
+
+    <insert id="insertAddress" useGeneratedKeys="true" keyProperty="addressId" keyColumn="ADDRESS_ID">
+        INSERT INTO USER_ADDRESS (USER_NO, ADDRESS_NAME, ADDRESS, ADDRESS_DETAIL, IS_DEFAULT)
+        VALUES (#{userNo}, #{addressName}, #{address}, #{addressDetail}, #{isDefault})
+    </insert>
+
+<update id="updateAddress">
+    UPDATE USER_ADDRESS
+    SET ADDRESS_NAME = #{addressName, jdbcType=VARCHAR},
+        ADDRESS = #{address, jdbcType=VARCHAR},
+        ADDRESS_DETAIL = #{addressDetail, jdbcType=VARCHAR},
+        IS_DEFAULT = #{isDefault, jdbcType=CHAR}
+    WHERE ADDRESS_ID = #{addressId}
+      AND USER_NO = #{userNo}
+</update>
+
+    <delete id="deleteAddress">
+        DELETE FROM USER_ADDRESS
+         WHERE ADDRESS_ID = #{addressId}
+           AND USER_NO = #{userNo}
+    </delete>
+
+    <update id="clearDefaultByUserNo">
+        UPDATE USER_ADDRESS
+           SET IS_DEFAULT = 'N'
+         WHERE USER_NO = #{userNo}
+           AND IS_DEFAULT = 'Y'
+    </update>
+
+</mapper>

@@ -1,0 +1,34 @@
+spring.application.name=surit
+server.port=8989
+
+# JSP 화면 경로
+spring.mvc.view.prefix=/WEB-INF/views/
+spring.mvc.view.suffix=.jsp
+
+# DB 접속 정보 — 본인 환경에 맞게 채우세요
+spring.datasource.url=jdbc:oracle:thin:@<HOST>:<PORT>:<SID>
+spring.datasource.username=<USERNAME>
+spring.datasource.password=<PASSWORD>
+spring.datasource.driver-class-name=oracle.jdbc.driver.OracleDriver
+
+# MyBatis
+mybatis.mapper-locations=classpath:mappers/**/*.xml
+mybatis.type-aliases-package=com.surit
+mybatis.configuration.jdbc-type-for-null=NULL
+mybatis.configuration.map-underscore-to-camel-case=true
+
+logging.level.com.surit=DEBUG
+
+# 파일 업로드 제한
+spring.servlet.multipart.max-file-size=10MB
+spring.servlet.multipart.max-request-size=50MB
+server.tomcat.max-swallow-size=-1
+
+# 업로드 저장 경로
+file.upload-dir=uploads
+file.upload-dir.license=uploads/license
+file.web-prefix.license=/uploads/license
+file.upload-dir.photo=uploads/photo
+file.web-prefix.photo=/uploads/photo
+
+server.error.include-stacktrace=never

@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+	1회용 마이그레이션 전용.
+	★ 여기에는 절대 typeHandler 를 붙이지 말 것 (값이 망가진다).
+-->
+<mapper namespace="com.surit.chat.mapper.ChatCryptoMigrationMapper">
+
+	<select id="selectPlainMessages" resultType="com.surit.chat.dto.ChatMessageDTO">
+		SELECT MESSAGE_ID, CONTENT
+		  FROM CHAT_MESSAGE
+		 WHERE CONTENT IS NOT NULL
+		   AND CONTENT NOT LIKE 'enc:v1:%'
+		 ORDER BY MESSAGE_ID
+	</select>
+
+	<update id="updateContent">
+		UPDATE CHAT_MESSAGE
+		   SET CONTENT = #{content}
+		 WHERE MESSAGE_ID = #{messageId}
+	</update>
+
+</mapper>

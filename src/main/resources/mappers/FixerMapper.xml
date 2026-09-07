@@ -1,0 +1,211 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.fixer.verify.model.mapper.FixerMapper">
+
+	<!-- ================= 조회 ================= -->
+
+	<!-- ※ 아래 두 조회(selectPublicProfile · selectFixerProfile)에 공통으로 적용되는 규칙
+
+	     FIXER_PHOTO_URL 에 PHOTO_URL 별칭을 붙이는 이유 :
+	     map-underscore-to-camel-case 가 켜져 있어서 MyBatis 는
+	     FIXER_PHOTO_URL 을 fixerPhotoUrl 로 바꿔 DTO 필드를 찾는다.
+	     그런데 DTO 필드 이름은 photoUrl 이라 이름이 어긋나고,
+	     MyBatis 는 에러 없이 조용히 건너뛰어 값이 null 이 된다.
+	     (INSERT/UPDATE 는 #{photoUrl} 로 직접 지정해서 영향 없음 → 읽기만 깨짐)
+	     별칭을 주면 PHOTO_URL → photoUrl 로 정확히 맞는다.
+
+	     같은 이유로 FIXER_NAME · AVG_SCORE · REVIEW_COUNT 도 DTO 에
+	     fixerName · avgScore · reviewCount 필드가 있어야 값이 담긴다.
+	     필드를 안 만들면 예외 없이 조용히 null 이 되므로 주의. -->
+
+	<!-- 고객이 보는 기사 공개 프로필.
+	     평점·리뷰수는 REVIEW 를 스칼라 서브쿼리로 같이 가져온다.
+	     리뷰가 없으면 AVG 는 null, COUNT 는 0 이다. -->
+<select id="selectPublicProfile" parameterType="long"
+        resultType="com.surit.fixer.verify.model.dto.FixerProfileDTO">
+    SELECT
+        fp.USER_NO         AS USER_NO,
+        u.NAME             AS FIXER_NAME,
+        fp.INTRO           AS INTRO,
+        fp.CAREER_YEARS    AS CAREER_YEARS,
+        fp.APPROVAL_STATUS AS APPROVAL_STATUS,
+        fp.FIXER_PHOTO_URL AS PHOTO_URL,
+        (
+            SELECT ROUND(AVG(r.SCORE), 1)
+            FROM REVIEW r
+            WHERE r.FIXER_NO = fp.USER_NO
+        ) AS AVG_SCORE,
+        (
+            SELECT COUNT(*)
+            FROM REVIEW r
+            WHERE r.FIXER_NO = fp.USER_NO
+        ) AS REVIEW_COUNT
+    FROM FIXER_PROFILE fp
+    LEFT JOIN USERS u ON u.USER_NO = fp.USER_NO
+    WHERE fp.USER_NO = #{userNo}
+</select>
+
+	<!-- REJECT_REASON 을 같이 읽는 이유 :
+	     관리자가 거절할 때 남긴 사유를 기사 화면(verify.jsp)에 보여주기 위함.
+	     이 컬럼은 관리자 기능에서 채우고 여기서는 읽기만 한다.
+	     (재신청 시 NULL 로 비우는 것은 updateFixerProfile 의 SQL 에 직접 박혀 있다)
+	     거절된 적이 없거나 관리자가 사유를 안 적었으면 null 이므로
+	     화면에서 empty 검사를 하고 출력한다. -->
+
+	<select id="selectFixerProfile" parameterType="long"
+	        resultType="com.surit.fixer.verify.model.dto.FixerProfileDTO">
+		SELECT USER_NO, INTRO, CAREER_YEARS, APPROVAL_STATUS,
+		       FIXER_PHOTO_URL AS PHOTO_URL,
+		       REJECT_REASON
+		  FROM FIXER_PROFILE
+		 WHERE USER_NO = #{userNo}
+	</select>
+
+	<select id="selectLicensesByUserNo" 
+	        parameterType="Long"
+	        resultType="com.surit.fixer.verify.model.dto.FixerLicenseDTO">
+		SELECT LICENSE_ID, USER_NO, LICENSE_NAME, UPLOAD_URL, ISSUED_AT
+		  FROM FIXER_LICENSE
+		 WHERE USER_NO = #{userNo}
+		 ORDER BY LICENSE_ID
+	</select>
+
+	<!--
+		접수 목록 화면(F-15)에 "내 활동 지역 / 수리 가능 분야" 를 보여줄 때 쓰던
+		selectMyRegionNames / selectMyCategoryNames 는 2026-09-02 삭제했다.
+
+		기사 공개 프로필 화면이 추가되면서 같은 내용을 조회하는
+		selectFixerRegionNames / selectFixerCategoryNames 가 생겼는데
+		(이 파일 맨 아래 "기사 공개 프로필" 구역),
+		두 벌을 두면 조건이 바뀔 때 한쪽만 고쳐져 화면끼리 어긋난다.
+		그래서 그쪽 하나로 합치고, FixerServiceImpl 의
+		getMyRegionNames / getMyCategoryNames 가 그것을 부르도록 바꿨다.
+		(서비스·컨트롤러·JSP 의 이름은 그대로라 화면 쪽 변경은 없다)
+	-->
+
+	<!-- ================= 등록 / 수정 ================= -->
+
+	<!-- 신규 신청 : 상태는 무조건 PENDING 으로 시작 -->
+	<insert id="insertFixerProfile"
+	        parameterType="com.surit.fixer.verify.model.dto.FixerProfileDTO">
+		INSERT INTO FIXER_PROFILE (
+			USER_NO, INTRO, CAREER_YEARS, APPROVAL_STATUS, FIXER_PHOTO_URL
+		) VALUES (
+			#{userNo}, #{intro}, #{careerYears}, 'PENDING', #{photoUrl}
+		)
+	</insert>
+
+	<!-- 재신청 : REJECTED 상태에서만 다시 PENDING 으로 되돌린다.
+	     WHERE 에 상태 조건을 넣어서, 조회한 뒤 여기까지 오는 사이에
+	     관리자가 승인해버렸다면 0건이 수정되도록 한다.
+
+	     REJECT_REASON / APPROVED_AT 을 NULL 로 비우는 이유 :
+	     이 두 컬럼은 관리자 심사 결과를 담는 값이라, 다시 '심사 대기(PENDING)'
+	     로 되돌리는 시점에는 둘 다 성립하지 않는 값이 된다.
+	     안 지우면 재신청 건에 지난번 거절 사유가 그대로 붙어 있어서,
+	     관리자도 기사도 옛 심사 결과를 현재 것으로 오해하게 된다. -->
+	<update id="updateFixerProfile"
+	        parameterType="com.surit.fixer.verify.model.dto.FixerProfileDTO">
+		UPDATE FIXER_PROFILE
+		   SET INTRO           = #{intro},
+		       CAREER_YEARS    = #{careerYears},
+		       APPROVAL_STATUS = 'PENDING',
+		       FIXER_PHOTO_URL = #{photoUrl},
+		       REJECT_REASON   = NULL,
+		       APPROVED_AT     = NULL
+		 WHERE USER_NO         = #{userNo}
+		   AND APPROVAL_STATUS = 'REJECTED'
+	</update>
+
+	<!-- LICENSE_ID 는 IDENTITY 라 컬럼에서 아예 뺀다 (DB가 채워줌) -->
+	<insert id="insertFixerLicense"
+	        parameterType="com.surit.fixer.verify.model.dto.FixerLicenseDTO">
+		INSERT INTO FIXER_LICENSE (
+			USER_NO, LICENSE_NAME, UPLOAD_URL, ISSUED_AT
+		) VALUES (
+			#{userNo}, #{licenseName}, #{uploadUrl}, #{issuedAt}
+		)
+	</insert>
+
+	<insert id="insertFixerRegion">
+		INSERT INTO FIXER_REGION (USER_NO, REGION_CODE)
+		VALUES (#{userNo}, #{regionCode})
+	</insert>
+
+	<insert id="insertFixerCategory">
+		INSERT INTO FIXER_CATEGORY (USER_NO, CATEGORY_CODE)
+		VALUES (#{userNo}, #{categoryCode})
+	</insert>
+
+	<!-- ================= 삭제 ================= -->
+
+	<delete id="deleteLicensesByUserNo" parameterType="Long">
+		DELETE FROM FIXER_LICENSE WHERE USER_NO = #{userNo}
+	</delete>
+
+	<delete id="deleteRegionsByUserNo" parameterType="Long">
+		DELETE FROM FIXER_REGION WHERE USER_NO = #{userNo}
+	</delete>
+
+	<delete id="deleteCategoriesByUserNo" parameterType="Long">
+		DELETE FROM FIXER_CATEGORY WHERE USER_NO = #{userNo}
+	</delete>
+
+	<!-- ================= 고객이 보는 기사 공개 프로필 (기사 프로필 화면) =================
+	     아래 4개는 기사 프로필 화면(다른 담당 파트)이 추가하면서 들어온 조회다.
+	     그중 이름 조회 2개는 접수 목록 화면(F-15)도 같이 쓴다. -->
+
+<!-- 기사가 수리 가능하다고 등록한 카테고리 이름 목록.
+     기사 공개 프로필 화면과 접수 목록 화면(F-15)이 함께 쓴다.
+
+     ORDER BY 를 붙인 이유 (2026-09-02 추가) :
+     정렬을 지정하지 않으면 오라클은 행 순서를 보장하지 않는다. 대개는 같은
+     순서로 나오지만 실행 계획이 바뀌면 달라질 수 있어서, 새로고침할 때마다
+     화면의 분야 칩 순서가 뒤바뀌어 보일 수 있다. 이름순으로 고정한다. -->
+<select id="selectFixerCategoryNames" parameterType="long" resultType="string">
+    SELECT cc.CODE_NAME
+    FROM FIXER_CATEGORY fc
+    JOIN COMMON_CODE cc ON cc.CODE_ID = fc.CATEGORY_CODE AND cc.CODE_GROUP = 'CATEGORY'
+    WHERE fc.USER_NO = #{userNo}
+    ORDER BY cc.CODE_NAME
+</select>
+
+<!-- 기사가 활동 가능하다고 등록한 지역 이름 목록.
+     기사 공개 프로필 화면과 접수 목록 화면(F-15)이 함께 쓴다.
+     ORDER BY 는 위 selectFixerCategoryNames 와 같은 이유로 붙였다. -->
+<select id="selectFixerRegionNames" parameterType="long" resultType="string">
+    SELECT cc.CODE_NAME
+    FROM FIXER_REGION fr
+    JOIN COMMON_CODE cc ON cc.CODE_ID = fr.REGION_CODE AND cc.CODE_GROUP = 'REGION'
+    WHERE fr.USER_NO = #{userNo}
+    ORDER BY cc.CODE_NAME
+</select>
+
+<!-- 이 기사가 선택되어 실제로 수리 완료까지 간 건수 -->
+<select id="selectCompletedJobCount" parameterType="long" resultType="long">
+    SELECT COUNT(*)
+    FROM ESTIMATES e
+    JOIN REPAIR_REQUESTS r ON r.REQUEST_ID = e.REQUEST_ID
+    WHERE e.FIXER_NO = #{userNo}
+      AND e.STATUS = 'SELECTED'
+      AND r.STATUS_CODE = 'REQ_04'
+</select>
+
+<!-- 특정 접수(requestId)에 이 기사가 보낸 견적 하나 -->
+<select id="selectEstimateByRequestAndFixer" resultType="com.surit.fixer.estimate.model.dto.EstimateDTO">
+    SELECT
+        e.ESTIMATE_ID          AS estimateId,
+        e.REQUEST_ID           AS requestId,
+        e.FIXER_NO             AS fixerNo,
+        e.ESTIMATED_PRICE      AS estimatedPrice,
+        e.ESTIMATED_DURATION   AS estimatedDuration,
+        e.CONTENT               AS content,
+        e.STATUS                AS status,
+        e.CREATED_AT             AS createdAt
+    FROM ESTIMATES e
+    WHERE e.REQUEST_ID = #{requestId}
+      AND e.FIXER_NO = #{fixerNo}
+</select>
+</mapper>

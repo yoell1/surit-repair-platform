@@ -1,0 +1,27 @@
+<%--
+	기사 기능 4개를 오가는 메뉴.
+
+	공통 헤더(/WEB-INF/views/common/header.jsp)는 고객 기준이라
+	기사용 메뉴가 없다. 헤더를 고치면 팀원 화면까지 같이 바뀌므로
+	기사 페이지 안에만 이 줄을 둔다.
+
+	현재 페이지는 각 JSP 에서 navActive 값을 정해서 보낸다.
+	예) <c:set var="navActive" value="requests"/>
+--%>
+<%@ page pageEncoding="UTF-8" %>
+<nav class="side-nav" style="display:flex;gap:8px;margin-bottom:26px">
+	<a href="/fixer/requests" class="${navActive eq 'requests' ? 'is-active' : ''}">
+		<svg class="ico"><use href="#i-search"/></svg>내 주변 새 접수</a>
+	<a href="/fixer/estimates" class="${navActive eq 'estimates' ? 'is-active' : ''}">
+		<svg class="ico"><use href="#i-doc"/></svg>내 견적</a>
+	<a href="/fixer/jobs" class="${navActive eq 'jobs' ? 'is-active' : ''}">
+		<svg class="ico"><use href="#i-list"/></svg>내 작업</a>
+	<a href="/fixer/verify" class="${navActive eq 'verify' ? 'is-active' : ''}">
+		<svg class="ico"><use href="#i-shield"/></svg>기사 인증</a>
+	<%-- FixerMyPageController 의 매핑은 /fixer/mypage 다.
+	     2026-09-02 이전에는 /fixer/fixer-mypage 로 적혀 있어서 404 가 났다.
+	     이 조각은 기사 화면 네 곳에 전부 include 되므로 어디서 눌러도 에러였다. --%>
+	<a href="/fixer/mypage" class="${navActive eq 'fixerMypage' ? 'is-active' : ''}">
+		<svg class="ico"><use href="#i-edit"/></svg>수리 정보 관리</a>
+
+</nav>

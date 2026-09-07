@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+  PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.fixer.booking.mapper.FixerBookingMapper">
+
+	<!--
+	  2026-09-02 수정 — 테이블·컬럼 이름을 실제 스키마에 맞춤
+
+	  이전에는 REQUESTS / CUSTOMER_NO / USER_NAME / ADDRESS / DETAIL_ADDRESS /
+	  STATUS 를 썼는데 그런 이름은 이 DB에 없다. 실행하면 ORA-00942 가 난다.
+
+	  ※ VISIT_DATE 는 TO_DATE(..., 'YYYY-MM-DD') 로 저장돼서 날짜만 들어있다.
+	    시간대는 VISIT_TIME_CODE 라는 별도 컬럼(COMMON_CODE 참조)에 있으므로
+	    둘을 붙여서 "08.14 오후 2시~4시" 처럼 만든다.
+	-->
+	<select id="selectBookingDetail"
+	        resultType="com.surit.fixer.booking.model.dto.BookingDetailDTO">
+		SELECT R.REQUEST_ID,
+		       CASE
+		         WHEN R.VISIT_DATE IS NULL THEN '채팅에서 협의'
+		         ELSE TO_CHAR(R.VISIT_DATE, 'MM.DD') || ' ' || NVL(VT.CODE_NAME, '')
+		       END                AS VISIT_DATE,
+		       R.SERVICE_ADDRESS  AS VISIT_ADDRESS,
+		       U.NAME             AS CUSTOMER_NAME,
+		       R.STATUS_CODE      AS STATUS
+		  FROM REPAIR_REQUESTS R
+		  JOIN USERS U             ON U.USER_NO = R.USER_NO
+		  LEFT JOIN COMMON_CODE VT ON VT.CODE_ID = R.VISIT_TIME_CODE
+		 WHERE R.REQUEST_ID = #{requestId}
+	</select>
+
+	<!--
+	  UPDATED_AT 컬럼은 REPAIR_REQUESTS 에 없어서 뺐다.
+	  상태 컬럼 이름도 STATUS 가 아니라 STATUS_CODE 다.
+	-->
+	<update id="updateRequestStatus">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = #{status}
+		 WHERE REQUEST_ID = #{requestId}
+	</update>
+
+</mapper>

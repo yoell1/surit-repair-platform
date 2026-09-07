@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<!--
+	견적 수락 (고객이 기사를 고르는 순간)  2026-08-31
+
+	아래 3문장은 RequestServiceImpl.selectEstimate() 에서
+	반드시 한 트랜잭션으로 같이 실행된다.
+	중간에 끊기면 "기사는 정해졌는데 접수는 아직 견적중" 같은
+	유령 데이터가 남아서 채팅방이 안 열린다.
+
+	★ WHERE 절에 조건을 다 넣어둔 이유
+	  남의 견적 번호를 폼에 넣어 보내거나, 버튼을 두 번 눌러도
+	  조건에 안 맞으면 0건이 되고 예외도 안 난다.
+	  서비스에서 반환값이 1인지 확인해서 잡아낸다.
+-->
+<mapper namespace="com.surit.common.request.model.mapper.EstimateSelectMapper">
+
+	<!-- 1) 고른 견적만 SELECTED 로.
+	        REQUEST_ID 를 같이 거는 게 핵심이다.
+	        이게 없으면 남의 접수에 달린 견적 번호로도 성공해 버린다. -->
+	<update id="markEstimateSelected">
+		UPDATE ESTIMATES
+		   SET STATUS = 'SELECTED'
+		 WHERE ESTIMATE_ID = #{estimateId}
+		   AND REQUEST_ID  = #{requestId}
+		   AND STATUS      = 'PENDING'
+	</update>
+
+	<!-- 2) 같은 접수의 나머지 견적은 REJECTED 로.
+	        안 바꾸면 떨어진 기사들 화면에 계속 "대기중" 으로 남는다.
+	        견적이 하나뿐이면 0건인데, 그건 정상이다. -->
+	<update id="rejectOtherEstimates">
+		UPDATE ESTIMATES
+		   SET STATUS = 'REJECTED'
+		 WHERE REQUEST_ID   = #{requestId}
+		   AND ESTIMATE_ID != #{estimateId}
+		   AND STATUS       = 'PENDING'
+	</update>
+
+	<!-- 3) 접수를 매칭완료(REQ_03)로.
+	        아직 기사를 안 정한 상태(REQ_01·REQ_02·REQ_99)일 때만 바뀐다.
+	        USER_NO 까지 걸어서 남의 접수는 애초에 못 건드린다.
+
+	        REQ_99(긴급접수)를 2026-09-02 에 추가했다.
+	        긴급 접수도 "아직 기사를 안 정한" 상태라 매칭 대상이다.
+	        이게 없으면 기사가 견적을 낼 수는 있는데 고객이 그 견적을
+	        선택해도 0건이라 매칭이 안 되고 견적 단계에서 멈춰버린다. -->
+	<update id="updateRequestToMatched">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = 'REQ_03'
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND USER_NO     = #{userNo}
+		   AND STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+	</update>
+
+</mapper>

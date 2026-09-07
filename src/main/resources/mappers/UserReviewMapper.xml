@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.user.review.model.mapper.UserReviewMapper">
+
+    <!-- ⚠ 테이블명 REVIEW 는 추정치. 다른 테이블(REPAIR_REQUESTS, ESTIMATES)이
+         복수형이라 REVIEWS 일 수도 있음. ORA-00942 뜨면 REVIEWS 로 교체 -->
+    <select id="selectReviewsByUserNo" resultType="com.surit.user.model.dto.UserReviewDTO">
+        SELECT
+            rv.REVIEW_ID    AS reviewId,
+            rv.REQUEST_ID   AS requestId,
+            rv.USER_NO      AS userNo,
+            rv.FIXER_NO     AS fixerNo,
+            rv.SCORE        AS score,
+            rv.CONTENT      AS content,
+            rv.CREATED_AT   AS createdAt,
+            r.TITLE         AS requestTitle,
+            u.NAME          AS fixerName
+        FROM REVIEW rv
+        LEFT JOIN REPAIR_REQUESTS r ON r.REQUEST_ID = rv.REQUEST_ID
+        LEFT JOIN USERS u ON u.USER_NO = rv.FIXER_NO
+        WHERE rv.USER_NO = #{userNo}
+        ORDER BY rv.CREATED_AT DESC
+    </select>
+<insert id="insertReview">
+    INSERT INTO REVIEW (REQUEST_ID, USER_NO, FIXER_NO, SCORE, CONTENT)
+    VALUES (#{requestId}, #{userNo}, #{fixerNo}, #{score}, #{content})
+</insert>
+
+<select id="selectReviewByRequestId" resultType="com.surit.user.model.dto.UserReviewDTO">
+    SELECT
+        rv.REVIEW_ID    AS reviewId,
+        rv.REQUEST_ID   AS requestId,
+        rv.USER_NO      AS userNo,
+        rv.FIXER_NO     AS fixerNo,
+        rv.SCORE        AS score,
+        rv.CONTENT      AS content,
+        rv.CREATED_AT   AS createdAt
+    FROM REVIEW rv
+    WHERE rv.REQUEST_ID = #{requestId}
+      AND rv.USER_NO = #{userNo}
+</select>
+</mapper>

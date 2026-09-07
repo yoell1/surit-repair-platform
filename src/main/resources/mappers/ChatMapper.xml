@@ -1,0 +1,273 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.chat.mapper.ChatMapper">
+
+	<!-- ══════════════════════════════════════════════
+	     암호화 대상은 CHAT_MESSAGE.CONTENT 하나뿐이다.
+	     typeHandler 가 저장할 때 암호화 / 읽을 때 복호화를 자동으로 한다.
+	     그래서 Service·Controller·JSP 는 손댈 필요가 없다.
+
+	     ※ resultType 대신 resultMap 을 쓰는 이유
+	       resultType 은 "이 컬럼만 다르게 처리해줘" 를 지정할 수 없다.
+	       CONTENT 한 칸에만 typeHandler 를 걸려면 resultMap 이 필요하다.
+	     ══════════════════════════════════════════════ -->
+
+	<resultMap id="messageMap" type="com.surit.chat.dto.ChatMessageDTO">
+		<id     property="messageId"   column="MESSAGE_ID"/>
+		<result property="roomId"      column="ROOM_ID"/>
+		<result property="senderNo"    column="SENDER_NO"/>
+		<result property="messageType" column="MESSAGE_TYPE"/>
+		<result property="content"     column="CONTENT"
+		        typeHandler="com.surit.chat.util.EncryptedStringTypeHandler"/>
+		<result property="filePath"    column="FILE_PATH"/>
+		<result property="sentAt"      column="SENT_AT"/>
+		<result property="readAt"      column="READ_AT"/>
+		<result property="senderName"  column="SENDER_NAME"/>
+	</resultMap>
+
+	<!-- 방 목록 3개가 같이 쓰는 map.
+	     쿼리마다 컬럼 수가 달라도 된다 - 없는 컬럼은 MyBatis 가 알아서 건너뛴다.
+	     LAST_MESSAGE 도 CONTENT 에서 온 값이라 복호화가 필요하다. -->
+	<resultMap id="roomListMap" type="com.surit.chat.dto.ChatRoomDTO">
+		<id     property="roomId"       column="ROOM_ID"/>
+		<result property="requestId"    column="REQUEST_ID"/>
+		<result property="userNo"       column="USER_NO"/>
+		<result property="fixerNo"      column="FIXER_NO"/>
+		<result property="categoryCode" column="CATEGORY_CODE"/>
+		<result property="createdAt"    column="CREATED_AT"/>
+		<result property="userName"     column="USER_NAME"/>
+		<result property="fixerName"    column="FIXER_NAME"/>
+		<result property="requestTitle" column="REQUEST_TITLE"/>
+		<result property="categoryName" column="CATEGORY_NAME"/>
+		<result property="lastMessage"  column="LAST_MESSAGE"
+		        typeHandler="com.surit.chat.util.EncryptedStringTypeHandler"/>
+		<result property="lastSenderNo" column="LAST_SENDER_NO"/>
+		<result property="lastSentAt"   column="LAST_SENT_AT"/>
+		<result property="unreadCount"  column="UNREAD_COUNT"/>
+		<result property="msgCount"     column="MSG_COUNT"/>
+	</resultMap>
+
+
+	<!-- 공통 조각 : 방 1개를 읽을 때 쓰는 컬럼 -->
+	<sql id="roomColumns">
+		       R.ROOM_ID,
+		       R.REQUEST_ID,
+		       R.USER_NO,
+		       R.FIXER_NO,
+		       R.CATEGORY_CODE,
+		       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
+		       CU.NAME  AS USER_NAME,
+		       FX.NAME  AS FIXER_NAME,
+		       RQ.TITLE AS REQUEST_TITLE,
+		       CC.CODE_NAME AS CATEGORY_NAME
+	</sql>
+
+	<sql id="roomJoins">
+		  FROM CHAT_ROOM R
+		  JOIN USERS CU                ON CU.USER_NO    = R.USER_NO
+		  LEFT JOIN USERS FX           ON FX.USER_NO    = R.FIXER_NO
+		  LEFT JOIN REPAIR_REQUESTS RQ ON RQ.REQUEST_ID = R.REQUEST_ID
+		  LEFT JOIN COMMON_CODE CC     ON CC.CODE_ID    = R.CATEGORY_CODE
+	</sql>
+
+	<!-- ══════════ 채팅방 ══════════ -->
+
+	<select id="selectRoomById" resultType="com.surit.chat.dto.ChatRoomDTO">
+		SELECT <include refid="roomColumns"/>
+		<include refid="roomJoins"/>
+		 WHERE R.ROOM_ID = #{roomId}
+	</select>
+
+	<select id="selectRoomByRequestId" resultType="com.surit.chat.dto.ChatRoomDTO">
+		SELECT * FROM (
+			SELECT <include refid="roomColumns"/>
+			<include refid="roomJoins"/>
+			 WHERE R.REQUEST_ID = #{requestId}
+			 ORDER BY R.ROOM_ID
+		) WHERE ROWNUM = 1
+	</select>
+
+	<!-- 방 생성 전 재료 : 배정 기사는 채택된 견적으로 역추적 -->
+	<select id="selectRoomSeedByRequest" resultType="com.surit.chat.dto.ChatRoomDTO">
+		SELECT RQ.REQUEST_ID,
+		       RQ.USER_NO,
+		       RQ.CATEGORY_CODE,
+		       (SELECT E.FIXER_NO
+		          FROM ESTIMATES E
+		         WHERE E.REQUEST_ID = RQ.REQUEST_ID
+		           AND E.STATUS = 'SELECTED'
+		           AND ROWNUM = 1) AS FIXER_NO
+		  FROM REPAIR_REQUESTS RQ
+		 WHERE RQ.REQUEST_ID = #{requestId}
+	</select>
+
+	<!-- ROOM_ID 는 IDENTITY 라 넣지 않는다 (넣으면 ORA-32795) -->
+<insert id="insertRoom">
+    INSERT INTO CHAT_ROOM (REQUEST_ID, USER_NO, FIXER_NO, CATEGORY_CODE, CREATED_AT)
+    VALUES (#{requestId, jdbcType=BIGINT}, #{userNo}, #{fixerNo, jdbcType=BIGINT}, #{categoryCode, jdbcType=VARCHAR}, SYSTIMESTAMP)
+</insert>
+
+	<select id="selectRoomsByUserNo" resultMap="roomListMap">
+		SELECT <include refid="roomColumns"/>,
+		       (SELECT M.CONTENT FROM (SELECT CONTENT FROM CHAT_MESSAGE
+		          WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+		         WHERE ROWNUM = 1) AS LAST_MESSAGE,
+		       (SELECT COUNT(*) FROM CHAT_MESSAGE M2
+		         WHERE M2.ROOM_ID = R.ROOM_ID
+		           AND M2.SENDER_NO != #{userNo}
+		           AND M2.READ_AT IS NULL) AS UNREAD_COUNT
+		<include refid="roomJoins"/>
+		 WHERE R.USER_NO  = #{userNo}
+		    OR R.FIXER_NO = #{userNo}
+		 ORDER BY R.ROOM_ID DESC
+	</select>
+
+	<!-- ══════════ 문의방 (SUPPORT) ══════════ -->
+
+	<select id="selectSupportUserNo" resultType="long">
+		SELECT USER_NO FROM USERS WHERE USER_ID = 'surit_support'
+	</select>
+
+	<select id="selectInquiryTypes" resultType="com.surit.chat.dto.CodeDTO">
+		SELECT CODE_ID, CODE_NAME
+		  FROM COMMON_CODE
+		 WHERE CODE_GROUP = 'INQUIRY_TYPE'
+		   AND NVL(USE_YN, 'Y') = 'Y'
+		 ORDER BY CODE_ID
+	</select>
+
+	<!-- 방금 만든 문의방 ID (문의방은 REQUEST_ID 가 없어서 이렇게 찾는다) -->
+	<select id="selectLatestSupportRoomId" resultType="long">
+		SELECT MAX(ROOM_ID) FROM CHAT_ROOM
+		 WHERE USER_NO = #{userNo} AND REQUEST_ID IS NULL
+	</select>
+
+	<!-- 고객이 보는 내 문의 목록 -->
+	<select id="selectMySupportRooms" resultMap="roomListMap">
+		SELECT R.ROOM_ID,
+		       R.USER_NO,
+		       R.CATEGORY_CODE,
+		       CC.CODE_NAME AS CATEGORY_NAME,
+		       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
+		       (SELECT M.CONTENT FROM (SELECT CONTENT FROM CHAT_MESSAGE
+		          WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+		         WHERE ROWNUM = 1) AS LAST_MESSAGE,
+		       (SELECT M.SENT_AT FROM (SELECT TO_CHAR(SENT_AT,'YYYY-MM-DD HH24:MI') AS SENT_AT
+		          FROM CHAT_MESSAGE WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+		         WHERE ROWNUM = 1) AS LAST_SENT_AT,
+		       (SELECT COUNT(*) FROM CHAT_MESSAGE M2
+		         WHERE M2.ROOM_ID = R.ROOM_ID
+		           AND M2.SENDER_NO != #{userNo}
+		           AND M2.READ_AT IS NULL) AS UNREAD_COUNT
+		  FROM CHAT_ROOM R
+		  LEFT JOIN COMMON_CODE CC ON CC.CODE_ID = R.CATEGORY_CODE
+		 WHERE R.REQUEST_ID IS NULL
+		   AND R.USER_NO = #{userNo}
+		 ORDER BY R.ROOM_ID DESC
+	</select>
+
+	<!-- 관리자가 보는 전체 문의 목록 (filter: ALL / WAIT / DONE) -->
+	<select id="selectAllSupportRooms" resultMap="roomListMap">
+		SELECT * FROM (
+			SELECT R.ROOM_ID,
+			       R.USER_NO,
+			       U.NAME AS USER_NAME,
+			       R.CATEGORY_CODE,
+			       CC.CODE_NAME AS CATEGORY_NAME,
+			       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
+			       (SELECT M.CONTENT FROM (SELECT CONTENT FROM CHAT_MESSAGE
+			          WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+			         WHERE ROWNUM = 1) AS LAST_MESSAGE,
+			       (SELECT M.SENDER_NO FROM (SELECT SENDER_NO FROM CHAT_MESSAGE
+			          WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+			         WHERE ROWNUM = 1) AS LAST_SENDER_NO,
+			       (SELECT M.SENT_AT FROM (SELECT TO_CHAR(SENT_AT,'YYYY-MM-DD HH24:MI') AS SENT_AT
+			          FROM CHAT_MESSAGE WHERE ROOM_ID = R.ROOM_ID ORDER BY MESSAGE_ID DESC) M
+			         WHERE ROWNUM = 1) AS LAST_SENT_AT,
+			       (SELECT COUNT(*) FROM CHAT_MESSAGE M3
+			         WHERE M3.ROOM_ID = R.ROOM_ID) AS MSG_COUNT
+			  FROM CHAT_ROOM R
+			  JOIN USERS U             ON U.USER_NO  = R.USER_NO
+			  LEFT JOIN COMMON_CODE CC ON CC.CODE_ID = R.CATEGORY_CODE
+			 WHERE R.REQUEST_ID IS NULL
+		)
+		<where>
+			<if test="filter != null and filter == 'WAIT'">
+				(LAST_SENDER_NO IS NULL OR LAST_SENDER_NO != #{supportNo})
+			</if>
+			<if test="filter != null and filter == 'DONE'">
+				LAST_SENDER_NO = #{supportNo}
+			</if>
+		</where>
+		ORDER BY ROOM_ID DESC
+	</select>
+
+	<!-- ══════════ 메시지 ══════════ -->
+
+	<select id="selectMessages" resultMap="messageMap">
+		SELECT M.MESSAGE_ID,
+		       M.ROOM_ID,
+		       M.SENDER_NO,
+		       M.MESSAGE_TYPE,
+		       M.CONTENT,
+		       M.FILE_PATH,
+		       TO_CHAR(M.SENT_AT, 'MM-DD HH24:MI') AS SENT_AT,
+		       TO_CHAR(M.READ_AT, 'YYYY-MM-DD HH24:MI') AS READ_AT,
+		       U.NAME AS SENDER_NAME
+		  FROM CHAT_MESSAGE M
+		  JOIN USERS U ON U.USER_NO = M.SENDER_NO
+		 WHERE M.ROOM_ID = #{roomId}
+		 ORDER BY M.MESSAGE_ID
+	</select>
+	
+	<select id="selectRecentMessages" resultMap="messageMap">
+		SELECT * FROM (
+			SELECT M.MESSAGE_ID,
+			       M.ROOM_ID,
+			       M.SENDER_NO,
+			       M.MESSAGE_TYPE,
+			       M.CONTENT,
+			       M.FILE_PATH,
+			       TO_CHAR(M.SENT_AT, 'MM-DD HH24:MI')      AS SENT_AT,
+			       TO_CHAR(M.READ_AT, 'YYYY-MM-DD HH24:MI') AS READ_AT,
+			       U.NAME AS SENDER_NAME
+			  FROM CHAT_MESSAGE M
+			  JOIN USERS U ON U.USER_NO = M.SENDER_NO
+			 WHERE M.ROOM_ID = #{roomId}
+			 ORDER BY M.MESSAGE_ID DESC
+		)
+		 WHERE ROWNUM &lt;= #{limit}
+		 ORDER BY MESSAGE_ID
+	</select>
+
+	<!-- MESSAGE_ID 는 IDENTITY 라 넣지 않는다 -->
+	<insert id="insertMessage" parameterType="com.surit.chat.dto.ChatMessageDTO">
+		INSERT INTO CHAT_MESSAGE (ROOM_ID, SENDER_NO, MESSAGE_TYPE, CONTENT, FILE_PATH, SENT_AT)
+		VALUES (#{roomId}, #{senderNo}, #{messageType},
+		        #{content, typeHandler=com.surit.chat.util.EncryptedStringTypeHandler},
+		        #{filePath, jdbcType=VARCHAR}, SYSTIMESTAMP)
+	</insert>
+
+	<update id="markAsRead">
+		UPDATE CHAT_MESSAGE
+		   SET READ_AT = SYSTIMESTAMP
+		 WHERE ROOM_ID    = #{roomId}
+		   AND SENDER_NO != #{readerNo}
+		   AND READ_AT IS NULL
+	</update>
+
+	<select id="countUnread" resultType="int">
+		SELECT COUNT(*)
+		  FROM CHAT_MESSAGE
+		 WHERE ROOM_ID    = #{roomId}
+		   AND SENDER_NO != #{readerNo}
+		   AND READ_AT IS NULL
+	</select>
+
+	<select id="selectUserName" resultType="string">
+		SELECT NAME FROM USERS WHERE USER_NO = #{userNo}
+	</select>
+
+</mapper>

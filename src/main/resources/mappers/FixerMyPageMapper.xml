@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.fixer.mypage.mapper.FixerMyPageMapper">
+
+    <select id="selectAllCategories" resultType="map">
+        SELECT CODE_ID as "codeId", CODE_NAME as "codeName"
+        FROM COMMON_CODE
+        WHERE CODE_GROUP = 'CATEGORY'
+        ORDER BY CODE_ID
+    </select>
+
+    <select id="selectAllRegions" resultType="map">
+        SELECT CODE_ID as "codeId", CODE_NAME as "codeName"
+        FROM COMMON_CODE
+        WHERE CODE_GROUP = 'REGION'
+        ORDER BY CODE_ID
+    </select>
+
+    <select id="selectMyCategories" resultType="string">
+        SELECT CATEGORY_CODE FROM FIXER_CATEGORY WHERE USER_NO = #{fixerId}
+    </select>
+
+    <insert id="insertMyCategory">
+        INSERT INTO FIXER_CATEGORY (USER_NO, CATEGORY_CODE) VALUES (#{fixerId}, #{categoryCode})
+    </insert>
+
+    <delete id="deleteMyCategories">
+        DELETE FROM FIXER_CATEGORY WHERE USER_NO = #{fixerId}
+    </delete>
+
+    <select id="selectMyRegions" resultType="string">
+        SELECT REGION_CODE FROM FIXER_REGION WHERE USER_NO = #{fixerId}
+    </select>
+
+    <insert id="insertMyRegion">
+        INSERT INTO FIXER_REGION (USER_NO, REGION_CODE) VALUES (#{fixerId}, #{regionCode})
+    </insert>
+
+    <delete id="deleteMyRegions">
+        DELETE FROM FIXER_REGION WHERE USER_NO = #{fixerId}
+    </delete>
+
+</mapper>

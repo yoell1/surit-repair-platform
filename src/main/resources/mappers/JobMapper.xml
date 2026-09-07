@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.fixer.job.model.mapper.JobMapper">
+
+	<!--
+		"내 작업" 의 기준 :
+		ESTIMATES 에서 내가 낸 견적이면서 STATUS = 'SELECTED' 인 건.
+		고객이 내 견적을 골랐다는 뜻이다.
+
+		ESTIMATES 를 먼저 두고 REPAIR_REQUESTS 를 JOIN 하는 이유는
+		"내가 낸 견적" 이 훨씬 적어서 여기서 먼저 걸러내는 게 빠르기 때문.
+	-->
+	<sql id="jobColumns">
+		SELECT r.REQUEST_ID,
+		       r.TITLE,
+		       r.CONTENT,
+		       r.SERVICE_ADDRESS,
+		       r.STATUS_CODE,
+		       r.CREATED_AT,
+		       sc.CODE_NAME AS STATUS_NAME,
+		       cc.CODE_NAME AS CATEGORY_NAME,
+		       u.NAME       AS CUSTOMER_NAME,
+		       u.PHONE      AS CUSTOMER_PHONE,
+		       e.ESTIMATE_ID,
+		       e.ESTIMATED_PRICE,
+		       e.ESTIMATED_DURATION,
+		       e.CONTENT    AS ESTIMATE_CONTENT
+		  FROM ESTIMATES e
+		  JOIN REPAIR_REQUESTS r ON r.REQUEST_ID = e.REQUEST_ID
+		  JOIN USERS           u ON u.USER_NO    = r.USER_NO
+		  LEFT JOIN COMMON_CODE cc ON cc.CODE_ID = r.CATEGORY_CODE
+		  LEFT JOIN COMMON_CODE sc ON sc.CODE_ID = r.STATUS_CODE
+		 WHERE e.FIXER_NO = #{fixerNo}
+		   AND e.STATUS   = 'SELECTED'
+	</sql>
+
+
+	<select id="selectMyJobs" resultType="com.surit.fixer.job.model.dto.JobDTO">
+		<include refid="jobColumns"/>
+		<if test="statusCode != null and statusCode != ''">
+			AND r.STATUS_CODE = #{statusCode}
+		</if>
+		<!-- 진행중(REQ_03)을 위로, 그 다음 최신순 -->
+		 ORDER BY CASE r.STATUS_CODE WHEN 'REQ_03' THEN 0 ELSE 1 END,
+		          r.CREATED_AT DESC,
+		          r.REQUEST_ID DESC
+	</select>
+
+
+	<select id="selectMyJob" resultType="com.surit.fixer.job.model.dto.JobDTO">
+		<include refid="jobColumns"/>
+		   AND r.REQUEST_ID = #{requestId}
+	</select>
+
+
+	<!--
+		수리 완료 처리.
+		EXISTS 절이 "이건 내 작업이 맞다" 를 SQL 안에서 확인한다.
+		남의 작업 번호를 주소창에 넣어도 0건이 되어 아무 일도 안 일어난다.
+	-->
+	<update id="completeJob">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = 'REQ_04'
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND STATUS_CODE = 'REQ_03'
+		   AND EXISTS (
+		 		SELECT 1
+		 		  FROM ESTIMATES e
+		 		 WHERE e.REQUEST_ID = #{requestId}
+		 		   AND e.FIXER_NO   = #{fixerNo}
+		 		   AND e.STATUS     = 'SELECTED'
+		 	)
+	</update>
+
+</mapper>

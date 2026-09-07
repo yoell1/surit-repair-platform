@@ -1,0 +1,131 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.admin.model.mapper.MemberManagementMapper">
+	
+	<!-- 공통 검색 조건 -->
+	<sql id="searchWhere">
+		<where>
+			<if test="userRole != null and userRole != '' and userRole != 'ALL'">
+				AND U.USER_ROLE = #{userRole}
+			</if>
+			<if test="status != null and status != '' and status != 'ALL'">
+				AND U.STATUS = #{status}
+			</if>
+			<if test="keyword != null and keyword != ''">
+				AND (U.NAME    LIKE '%' || #{keyword} || '%'
+				  OR U.USER_ID LIKE '%' || #{keyword} || '%')
+			</if>
+		</where>
+	</sql>
+
+	<!--
+		1. 승인 대기 기사
+
+		이 목록에 오르는 조건은 두 가지를 모두 만족해야 한다.
+		  ① USERS.USER_ROLE = 'FIXER'           ← 기사 계정이어야 하고
+		  ② FIXER_PROFILE.APPROVAL_STATUS = 'PENDING'  ← 서류를 냈어야 한다
+
+		★ ① 조건이 없으면 어떻게 되나 (2026-08-31 실제로 겪은 문제)
+		  일반 회원(USER_ROLE='USER')인데 FIXER_PROFILE 에 PENDING 행만
+		  남아 있는 계정이 승인 대기 목록에 섞여 올라온다.
+		  관리자가 승인을 눌러도 서비스에서 "기사 계정이 아닙니다" 로 막히니,
+		  누를 수도 없는 줄이 목록만 차지하게 된다. 애초에 안 보이는 게 맞다.
+
+		★ JOIN(INNER)인 이유
+		  FIXER_PROFILE 행이 없다 = 아직 /fixer/verify 에서 서류를 안 냈다는 뜻.
+		  심사할 서류가 없으므로 승인 대기에 올릴 것이 없다.
+		  기사로 가입만 하고 서류 미제출인 계정은 여기 안 나오는 게 정상이다.
+	-->
+	<select id="selectPendingFixers" resultType="AdminMemberListDTO">
+		SELECT U.USER_NO, U.USER_ID, U.NAME, U.USER_ROLE,
+		       U.STATUS, U.CREATED_AT, F.APPROVAL_STATUS
+		  FROM USERS U
+		  JOIN FIXER_PROFILE F ON U.USER_NO = F.USER_NO
+		 WHERE F.APPROVAL_STATUS = 'PENDING'
+		   AND U.USER_ROLE       = 'FIXER'
+		 ORDER BY U.CREATED_AT ASC
+	</select>
+
+	<!-- 2. 전체 개수 (페이징용) -->
+	<select id="selectMemberCount" parameterType="MemberSearchCondition" resultType="int">
+		SELECT COUNT(*)
+		  FROM USERS U
+		  LEFT JOIN FIXER_PROFILE F ON U.USER_NO = F.USER_NO
+		<include refid="searchWhere" />
+	</select>
+
+	<!-- 3. 전체 회원 목록 -->
+	<select id="selectMemberList" parameterType="MemberSearchCondition"
+	        resultType="AdminMemberListDTO">
+		SELECT U.USER_NO, U.USER_ID, U.NAME, U.USER_ROLE,
+		       U.STATUS, U.CREATED_AT, F.APPROVAL_STATUS,
+		       ROUND(AVG(R.SCORE), 1) AS AVG_SCORE,
+		       COUNT(R.REVIEW_ID)     AS REVIEW_COUNT
+		  FROM USERS U
+		  LEFT JOIN FIXER_PROFILE F ON U.USER_NO = F.USER_NO
+		  LEFT JOIN REVIEW R        ON U.USER_NO = R.FIXER_NO
+		<include refid="searchWhere" />
+		 GROUP BY U.USER_NO, U.USER_ID, U.NAME, U.USER_ROLE,
+		          U.STATUS, U.CREATED_AT, F.APPROVAL_STATUS
+		 ORDER BY U.CREATED_AT DESC
+		OFFSET #{offset} ROWS
+		FETCH NEXT #{size} ROWS ONLY
+	</select>
+
+	<!-- 4. 기사 상세 -->
+	<select id="selectFixerDetail" resultType="AdminFixerDetailDTO">
+		SELECT U.USER_NO, U.USER_ID, U.NAME, U.PHONE, U.EMAIL,
+		       U.USER_ROLE, U.STATUS, U.CREATED_AT,
+		       F.INTRO, F.CAREER_YEARS, F.APPROVAL_STATUS,
+		       F.APPROVED_AT, F.REJECT_REASON
+		  FROM USERS U
+		  LEFT JOIN FIXER_PROFILE F ON U.USER_NO = F.USER_NO
+		 WHERE U.USER_NO = #{userNo}
+	</select>
+
+	<!-- 5. 자격증 -->
+	<select id="selectLicenses" resultType="FixerLicenseDTO">
+		SELECT LICENSE_ID, USER_NO, LICENSE_NAME, UPLOAD_URL, ISSUED_AT
+		  FROM FIXER_LICENSE
+		 WHERE USER_NO = #{userNo}
+		 ORDER BY ISSUED_AT DESC
+	</select>
+
+	<!-- 6. 수리 가능 카테고리 -->
+	<select id="selectCategories" resultType="string">
+		SELECT C.CODE_NAME
+		  FROM FIXER_CATEGORY FC
+		  JOIN COMMON_CODE C ON FC.CATEGORY_CODE = C.CODE_ID
+		 WHERE FC.USER_NO = #{userNo}
+	</select>
+
+	<!-- 7. 활동 지역 -->
+	<select id="selectRegions" resultType="string">
+		SELECT C.CODE_NAME
+		  FROM FIXER_REGION FR
+		  JOIN COMMON_CODE C ON FR.REGION_CODE = C.CODE_ID
+		 WHERE FR.USER_NO = #{userNo}
+	</select>
+
+	<!-- 8. 승인 -->
+	<update id="updateApprove">
+		UPDATE FIXER_PROFILE
+		   SET APPROVAL_STATUS = 'APPROVED',
+		       APPROVED_AT     = SYSTIMESTAMP,
+		       REJECT_REASON   = NULL
+		 WHERE USER_NO = #{userNo}
+	</update>
+
+	<!-- 9. 반려 -->
+	<update id="updateReject">
+		UPDATE FIXER_PROFILE
+		   SET APPROVAL_STATUS = 'REJECTED',
+		       APPROVED_AT     = SYSTIMESTAMP,
+		       REJECT_REASON   = #{reason}
+		 WHERE USER_NO = #{userNo}
+	</update>
+
+</mapper>
+
+
+

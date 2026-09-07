@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.admin.model.mapper.ReviewManagementMapper">
+
+	<sql id="reviewWhere">
+		<where>
+			<if test="score != null">
+				AND R.SCORE = #{score}
+			</if>
+			<if test="lowOnly">
+				AND R.SCORE &lt;= 3
+			</if>
+			<if test="keyword != null and keyword != ''">
+				AND (F.NAME LIKE '%' || #{keyword} || '%'
+				  OR U.NAME LIKE '%' || #{keyword} || '%')
+			</if>
+		</where>
+	</sql>
+
+	<!-- 1. 리뷰 목록 (원문 포함 — 관리자 전용) -->
+	<select id="selectReviewList" parameterType="AdminReviewSearchCondition"
+	        resultType="AdminReviewListDTO">
+		SELECT R.REVIEW_ID, R.REQUEST_ID, R.SCORE, R.CONTENT,
+		       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD') AS CREATED_AT,
+		       R.USER_NO,  U.NAME AS USER_NAME,
+		       R.FIXER_NO, F.NAME AS FIXER_NAME
+		  FROM REVIEW R
+		  JOIN USERS U ON R.USER_NO  = U.USER_NO
+		  JOIN USERS F ON R.FIXER_NO = F.USER_NO
+		<include refid="reviewWhere" />
+		 ORDER BY R.CREATED_AT DESC
+		OFFSET #{offset} ROWS
+		FETCH NEXT #{size} ROWS ONLY
+	</select>
+
+	<!-- 2. 전체 개수 (페이징용) -->
+	<select id="selectReviewCount" parameterType="AdminReviewSearchCondition" resultType="int">
+		SELECT COUNT(*)
+		  FROM REVIEW R
+		  JOIN USERS U ON R.USER_NO  = U.USER_NO
+		  JOIN USERS F ON R.FIXER_NO = F.USER_NO
+		<include refid="reviewWhere" />
+	</select>
+
+	<!-- 3. 리뷰 원문 단건 -->
+	<select id="selectReviewDetail" resultType="AdminReviewListDTO">
+		SELECT R.REVIEW_ID, R.REQUEST_ID, R.SCORE, R.CONTENT,
+		       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
+		       R.USER_NO,  U.NAME AS USER_NAME,
+		       R.FIXER_NO, F.NAME AS FIXER_NAME
+		  FROM REVIEW R
+		  JOIN USERS U ON R.USER_NO  = U.USER_NO
+		  JOIN USERS F ON R.FIXER_NO = F.USER_NO
+		 WHERE R.REVIEW_ID = #{reviewId}
+	</select>
+
+	<!-- 4. 평점 하위 기사 (3.0 미만) -->
+	<select id="selectLowRatedFixers" resultType="AdminLowRatedFixerDTO">
+		SELECT F.USER_NO, F.USER_ID, F.NAME,
+		       ROUND(AVG(R.SCORE), 1) AS AVG_SCORE,
+		       COUNT(R.REVIEW_ID)     AS REVIEW_COUNT
+		  FROM REVIEW R
+		  JOIN USERS F ON R.FIXER_NO = F.USER_NO
+		 GROUP BY F.USER_NO, F.USER_ID, F.NAME
+		HAVING AVG(R.SCORE) &lt; 3.0
+		 ORDER BY AVG(R.SCORE) ASC
+	</select>
+
+	<!-- 5. 기사 경고 등록 -->
+	<insert id="insertWarning">
+		INSERT INTO SANCTION
+		       (TARGET_NO, SANCTION_TYPE, SANCTION_REASON, START_AT, END_AT, ADMIN_ID)
+		VALUES (#{targetNo}, 'WARNING', #{reason}, SYSTIMESTAMP, NULL, #{adminId})
+	</insert>
+
+</mapper>

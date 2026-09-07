@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.admin.model.mapper.BlacklistManagementMapper">
+
+	<!-- 지금 유효한 정지인지 판단하는 조건 (여러 곳에서 재사용) -->
+	<sql id="activeSanction">
+		    S.SANCTION_TYPE IN ('SUSPEND','PERMANENT')
+		AND S.RELEASED_AT IS NULL
+		AND S.START_AT &lt;= SYSTIMESTAMP
+		AND (S.END_AT IS NULL OR S.END_AT &gt; SYSTIMESTAMP)
+	</sql>
+
+	<!-- ══════════ 경고 누적 대상 ══════════ -->
+
+	<select id="selectWarnTargets"
+	        resultType="com.surit.admin.model.dto.AdminWarnTargetDTO">
+		SELECT U.USER_NO,
+		       U.USER_ID,
+		       U.NAME,
+		       U.USER_ROLE,
+		       U.STATUS,
+		       COUNT(*) AS WARN_COUNT,
+		       TO_CHAR(MAX(S.START_AT), 'YYYY-MM-DD HH24:MI') AS LAST_WARN_AT
+		  FROM SANCTION S
+		  JOIN USERS U ON U.USER_NO = S.TARGET_NO
+		 WHERE S.SANCTION_TYPE = 'WARNING'
+		 GROUP BY U.USER_NO, U.USER_ID, U.NAME, U.USER_ROLE, U.STATUS
+		HAVING COUNT(*) &gt;= #{minCount}
+		 ORDER BY COUNT(*) DESC, MAX(S.START_AT) DESC
+	</select>
+
+	<select id="countWarnings" resultType="int">
+		SELECT COUNT(*) FROM SANCTION
+		 WHERE TARGET_NO = #{targetNo} AND SANCTION_TYPE = 'WARNING'
+	</select>
+
+	<!-- ══════════ 정지 목록 ══════════ -->
+
+	<select id="selectActiveSuspensions"
+	        resultType="com.surit.admin.model.dto.AdminSanctionListDTO">
+		SELECT S.SANCTION_ID,
+		       S.TARGET_NO,
+		       U.NAME AS TARGET_NAME,
+		       U.USER_ROLE,
+		       S.SANCTION_TYPE,
+		       S.SANCTION_REASON,
+		       TO_CHAR(S.START_AT, 'YYYY-MM-DD HH24:MI') AS START_AT,
+		       TO_CHAR(S.END_AT,   'YYYY-MM-DD HH24:MI') AS END_AT,
+		       S.ADMIN_ID,
+		       CASE WHEN S.END_AT IS NULL THEN NULL
+		            ELSE CEIL(CAST(S.END_AT AS DATE) - SYSDATE) END AS DAYS_LEFT
+		  FROM SANCTION S
+		  JOIN USERS U ON U.USER_NO = S.TARGET_NO
+		 WHERE <include refid="activeSanction"/>
+		 ORDER BY S.SANCTION_ID DESC
+	</select>
+
+	<select id="selectSanctionHistory"
+	        resultType="com.surit.admin.model.dto.AdminSanctionListDTO">
+		SELECT S.SANCTION_ID,
+		       S.TARGET_NO,
+		       U.NAME AS TARGET_NAME,
+		       U.USER_ROLE,
+		       S.SANCTION_TYPE,
+		       S.SANCTION_REASON,
+		       TO_CHAR(S.START_AT,    'YYYY-MM-DD HH24:MI') AS START_AT,
+		       TO_CHAR(S.END_AT,      'YYYY-MM-DD HH24:MI') AS END_AT,
+		       TO_CHAR(S.RELEASED_AT, 'YYYY-MM-DD HH24:MI') AS RELEASED_AT,
+		       S.ADMIN_ID
+		  FROM SANCTION S
+		  JOIN USERS U ON U.USER_NO = S.TARGET_NO
+		 ORDER BY S.SANCTION_ID DESC
+		 FETCH FIRST 100 ROWS ONLY
+	</select>
+
+	<!-- ══════════ 처리 ══════════ -->
+
+	<!-- SANCTION_ID 는 IDENTITY 라 넣지 않는다 -->
+	<insert id="insertSanction">
+		INSERT INTO SANCTION
+		       (TARGET_NO, SANCTION_TYPE, SANCTION_REASON, START_AT, END_AT, ADMIN_ID)
+		VALUES (#{targetNo}, #{sanctionType}, #{reason}, SYSTIMESTAMP,
+		<choose>
+			<when test="days != null">
+				SYSTIMESTAMP + NUMTODSINTERVAL(#{days}, 'DAY')
+			</when>
+			<otherwise>
+				NULL
+			</otherwise>
+		</choose>
+		       , #{adminId})
+	</insert>
+
+	<update id="releaseSanction">
+		UPDATE SANCTION
+		   SET RELEASED_AT = SYSTIMESTAMP
+		 WHERE SANCTION_ID = #{sanctionId}
+		   AND RELEASED_AT IS NULL
+	</update>
+
+	<update id="updateUserStatus">
+		UPDATE USERS SET STATUS = #{status} WHERE USER_NO = #{userNo}
+	</update>
+
+	<!--
+		★ 이 쿼리 하나가 "기간 만료 자동 해제"와 "수동 해제 후 정리"를 모두 담당한다.
+		  몇 번을 돌려도 안전하고, 정지가 겹쳐 있으면 남은 게 끝날 때까지 안 풀린다.
+	-->
+	<update id="syncExpiredSuspensions">
+		UPDATE USERS U
+		   SET U.STATUS = 'ACTIVE'
+		 WHERE U.STATUS = 'SUSPEND'
+		   AND NOT EXISTS (
+		         SELECT 1 FROM SANCTION S
+		          WHERE S.TARGET_NO = U.USER_NO
+		            AND <include refid="activeSanction"/>
+		       )
+	</update>
+
+</mapper>

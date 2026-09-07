@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.surit.admin.model.mapper.RequestManagementMapper">
+
+	<!-- 목록 / 카운트가 같이 쓰는 검색 조건 -->
+	<sql id="requestWhere">
+		<where>
+			<if test="statusCode != null and statusCode != ''">
+				AND R.STATUS_CODE = #{statusCode}
+			</if>
+			<if test="keyword != null and keyword != ''">
+				AND (R.TITLE LIKE '%' || #{keyword} || '%'
+				  OR U.NAME  LIKE '%' || #{keyword} || '%')
+			</if>
+			<if test="fromDate != null and fromDate != ''">
+				AND R.CREATED_AT &gt;= TO_DATE(#{fromDate}, 'YYYY-MM-DD')
+			</if>
+			<if test="toDate != null and toDate != ''">
+				AND R.CREATED_AT &lt; TO_DATE(#{toDate}, 'YYYY-MM-DD') + 1
+			</if>
+		</where>
+	</sql>
+
+	<!-- 1. 상태별 건수
+	     COMMON_CODE 기준으로 LEFT JOIN 하므로 0건인 상태도 '0' 으로 나온다.
+	     상태를 자바에 하드코딩하지 않았으므로,
+	     나중에 REQ_05 를 INSERT 하면 화면에 자동으로 추가된다. -->
+	<select id="selectStatusCounts" resultType="AdminStatusCountDTO">
+		SELECT C.CODE_ID     AS STATUS_CODE,
+		       C.CODE_NAME   AS STATUS_NAME,
+		       NVL(R.CNT, 0) AS CNT
+		  FROM COMMON_CODE C
+		  LEFT JOIN (SELECT STATUS_CODE, COUNT(*) AS CNT
+		               FROM REPAIR_REQUESTS
+		              GROUP BY STATUS_CODE) R
+		    ON R.STATUS_CODE = C.CODE_ID
+		 WHERE C.CODE_GROUP = 'STATUS'
+		   AND C.USE_YN     = 'Y'
+		 ORDER BY C.CODE_ID
+	</select>
+
+	<!-- 2. 접수 목록 -->
+	<select id="selectRequestList" parameterType="AdminRequestSearchCondition"
+	        resultType="AdminRequestListDTO">
+		SELECT R.REQUEST_ID,
+		       R.TITLE,
+		       R.CATEGORY_CODE,
+		       R.SERVICE_ADDRESS,
+		       R.STATUS_CODE,
+		       TO_CHAR(R.CREATED_AT, 'YYYY-MM-DD HH24:MI') AS CREATED_AT,
+		       R.USER_NO,
+		       CC.CODE_NAME AS CATEGORY_NAME,
+		       SC.CODE_NAME AS STATUS_NAME,
+		       U.NAME       AS CUSTOMER_NAME,
+		       U.PHONE      AS CUSTOMER_PHONE,
+		       (SELECT COUNT(*)
+		          FROM ESTIMATES E
+		         WHERE E.REQUEST_ID = R.REQUEST_ID) AS ESTIMATE_COUNT,
+		       (SELECT MAX(E.FIXER_NO)
+		          FROM ESTIMATES E
+		         WHERE E.REQUEST_ID = R.REQUEST_ID
+		           AND E.STATUS     = 'SELECTED') AS FIXER_NO,
+		       (SELECT MAX(F.NAME)
+		          FROM ESTIMATES E
+		          JOIN USERS F ON F.USER_NO = E.FIXER_NO
+		         WHERE E.REQUEST_ID = R.REQUEST_ID
+		           AND E.STATUS     = 'SELECTED') AS FIXER_NAME,
+		       (SELECT MAX(E.ESTIMATED_PRICE)
+		          FROM ESTIMATES E
+		         WHERE E.REQUEST_ID = R.REQUEST_ID
+		           AND E.STATUS     = 'SELECTED') AS ESTIMATED_PRICE
+		  FROM REPAIR_REQUESTS R
+		  JOIN USERS U ON U.USER_NO = R.USER_NO
+		  LEFT JOIN COMMON_CODE CC ON CC.CODE_ID = R.CATEGORY_CODE
+		  LEFT JOIN COMMON_CODE SC ON SC.CODE_ID = R.STATUS_CODE
+		<include refid="requestWhere" />
+		 ORDER BY R.CREATED_AT DESC, R.REQUEST_ID DESC
+		OFFSET #{offset} ROWS
+		FETCH NEXT #{size} ROWS ONLY
+	</select>
+
+	<!-- 3. 전체 건수 (페이징용) -->
+	<select id="selectRequestCount" parameterType="AdminRequestSearchCondition" resultType="int">
+		SELECT COUNT(*)
+		  FROM REPAIR_REQUESTS R
+		  JOIN USERS U ON U.USER_NO = R.USER_NO
+		<include refid="requestWhere" />
+	</select>
+
+</mapper>

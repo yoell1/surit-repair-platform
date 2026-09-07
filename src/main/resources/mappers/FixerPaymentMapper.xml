@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.fixer.payment.mapper.FixerPaymentMapper">
+
+    <!-- 1. 영수증 마스터 인서트 후 ID 반환 -->
+    <insert id="insertPayment" parameterType="com.surit.fixer.payment.model.dto.PaymentDTO">
+        <selectKey keyProperty="paymentId" resultType="long" order="BEFORE">
+            SELECT PAYMENT_SEQ.NEXTVAL FROM DUAL
+        </selectKey>
+        INSERT INTO PAYMENT (
+            PAYMENT_ID, 
+            ESTIMATE_ID, 
+            TOTAL_AMOUNT, 
+            PAYMENT_METHOD, 
+            CREATED_AT
+        ) VALUES (
+            #{paymentId}, 
+            <!-- 💡 꿀팁: Java(DTO) 수정 없이, 이미 가지고 있는 requestId와 fixerNo로 ESTIMATE_ID를 찾아오도록 서브쿼리 적용 -->
+            (SELECT ESTIMATE_ID FROM ESTIMATES WHERE REQUEST_ID = #{requestId} AND FIXER_NO = #{fixerNo} AND STATUS = 'SELECTED'), 
+            #{totalAmount}, 
+            #{paymentMethod}, 
+            SYSTIMESTAMP
+        )
+    </insert>
+
+    <!-- 2. 영수증 상세 내역 단건 인서트 -->
+    <insert id="insertPaymentDetail">
+        INSERT INTO PAYMENT_DETAIL (
+            DETAIL_ID, PAYMENT_ID, ITEM_CODE, ITEM_NAME, QUANTITY, UNIT_PRICE
+        ) VALUES (
+            PAYMENT_DETAIL_SEQ.NEXTVAL, #{paymentId}, NVL(#{itemCode}, 'GENERAL'), #{itemName}, #{quantity}, #{unitPrice}
+        )
+    </insert>
+
+    <!-- 3. 상태 변경 (수리 완료 처리) -->
+    <update id="updateRequestStatusToCompleted">
+        <!-- 💡 수정됨: 테이블명(REPAIR_REQUESTS), 상태 컬럼(STATUS_CODE), 수리완료 코드(REQ_04)로 변경 -->
+        UPDATE REPAIR_REQUESTS 
+        SET STATUS_CODE = 'REQ_04' 
+        WHERE REQUEST_ID = #{requestId}
+    </update>
+    
+    <!-- 4. 견적 번호로 결제 내역 단건 조회 (상세 페이지용) -->
+    <select id="selectPaymentByEstimateId" resultType="com.surit.fixer.payment.model.dto.PaymentDTO">
+        SELECT 
+            PAYMENT_ID AS paymentId,
+            ESTIMATE_ID AS estimateId,
+            TOTAL_AMOUNT AS totalAmount,
+            PAYMENT_METHOD AS paymentMethod,
+            CREATED_AT AS createdAt
+            <!-- 사진 URL 컬럼명이 DB와 다르다면 아래 AS 부분을 수정해주세요 -->
+            <!-- , BEFORE_PHOTO_URL AS beforePhotoUrl -->
+            <!-- , AFTER_PHOTO_URL AS afterPhotoUrl -->
+        FROM PAYMENT
+        WHERE ESTIMATE_ID = #{estimateId}
+    </select>
+
+</mapper>

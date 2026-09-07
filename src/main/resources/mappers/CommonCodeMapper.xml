@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+  "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--접수 아이콘 카테고리-->
+<mapper namespace="com.surit.common.model.mapper.CommonCodeMapper">
+
+    <select id="selectByGroup"
+            parameterType="string"
+            resultType="com.surit.common.model.dto.CommonCodeDTO">
+
+        SELECT CODE_ID,
+               CODE_GROUP,
+               CODE_NAME,
+               USE_YN
+          FROM COMMON_CODE
+         WHERE CODE_GROUP = #{codeGroup}
+           AND USE_YN = 'Y'
+
+         ORDER BY
+             CASE
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_10' THEN 1
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_02' THEN 2
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_01' THEN 3
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_05' THEN 4
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_06' THEN 5
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_03' THEN 6
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_09' THEN 7
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_04' THEN 8
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_08' THEN 9
+                 WHEN CODE_GROUP = 'CATEGORY' AND CODE_ID = 'CAT_07' THEN 10
+                 ELSE 999
+             END,
+             CODE_ID
+
+    </select>
+
+</mapper>

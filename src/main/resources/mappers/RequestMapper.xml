@@ -1,0 +1,358 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+	"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.surit.common.request.model.mapper.RequestMapper">
+
+	<!--
+		기사가 "볼 수 있는" 접수의 조건 — 분야 · 지역 · 차단 여부.
+		목록과 상세가 똑같은 조건을 써야 한다. 한쪽만 고치면 구멍이 생기니까
+		<sql> 로 빼놓고 양쪽에서 <include> 한다.
+
+		상태(STATUS_CODE) 조건은 여기 넣지 않는다.
+		목록(새 접수 찾기)과 상세(내가 견적 낸 것도 계속 보기)가
+		"어떤 상태까지 보여줄지" 기준이 서로 다르기 때문에,
+		각 <select> 에서 따로 붙인다.
+	-->
+	<sql id="fixerScope">
+		<!-- 내가 등록한 수리 분야와 일치 -->
+		AND EXISTS (
+			SELECT 1
+			  FROM FIXER_CATEGORY fc
+			 WHERE fc.USER_NO       = #{userNo}
+			   AND fc.CATEGORY_CODE = r.CATEGORY_CODE
+		)
+
+		<!--
+			내가 등록한 활동 지역과 일치.
+			REGION 코드의 CODE_NAME 이 '서울시 강남구' 형태이고
+			SERVICE_ADDRESS 가 '서울시 강남구 ...' 로 시작하므로 주소 안에 들어있는지로 판단한다.
+			(LIKE '%..%' 는 인덱스를 못 타서 데이터가 많아지면 느려진다.
+			 나중에 REPAIR_REQUESTS 에 REGION_CODE 컬럼이 생기면 그걸로 바꾸는 게 맞다.)
+		-->
+		AND EXISTS (
+			SELECT 1
+			  FROM FIXER_REGION fr
+			  JOIN COMMON_CODE  rc ON rc.CODE_ID = fr.REGION_CODE
+			 WHERE fr.USER_NO = #{userNo}
+			   AND r.SERVICE_ADDRESS LIKE '%' || rc.CODE_NAME || '%'
+		)
+
+		<!-- 내가 차단한 고객의 접수는 빼고 -->
+		AND NOT EXISTS (
+			SELECT 1
+			  FROM FIXER_BLOCK b
+			 WHERE b.FIXER_NO = #{userNo}
+			   AND b.USER_NO  = r.USER_NO
+		)
+	</sql>
+
+
+	<!-- 목록/상세가 공통으로 쓰는 SELECT 절 -->
+	<sql id="baseColumns">
+		SELECT r.REQUEST_ID,
+		       r.USER_NO,
+		       r.CATEGORY_CODE,
+		       r.TITLE,
+		       r.CONTENT,
+		       r.SERVICE_ADDRESS,
+		       r.STATUS_CODE,
+		       r.CREATED_AT,
+		       cc.CODE_NAME AS CATEGORY_NAME,
+		       sc.CODE_NAME AS STATUS_NAME,
+		       u.NAME       AS CUSTOMER_NAME,
+		       (SELECT COUNT(*)
+		          FROM ESTIMATES e
+		         WHERE e.REQUEST_ID = r.REQUEST_ID) AS ESTIMATE_COUNT,
+		<!--
+			내가 이미 견적을 냈는지.
+			목록을 돌면서 접수 하나마다 따로 조회하면 N+1 이 되니까
+			여기서 한 번에 같이 가져온다.
+		-->
+		       (SELECT MAX(e2.ESTIMATE_ID)
+		          FROM ESTIMATES e2
+		         WHERE e2.REQUEST_ID = r.REQUEST_ID
+		           AND e2.FIXER_NO   = #{userNo}) AS MY_ESTIMATE_ID
+		  FROM REPAIR_REQUESTS r
+		  JOIN USERS       u  ON u.USER_NO  = r.USER_NO
+		  LEFT JOIN COMMON_CODE cc ON cc.CODE_ID = r.CATEGORY_CODE
+		  LEFT JOIN COMMON_CODE sc ON sc.CODE_ID = r.STATUS_CODE
+	</sql>
+
+
+	<select id="selectNearbyRequests"
+	        resultType="com.surit.common.request.model.dto.RequestDTO">
+		<include refid="baseColumns"/>
+		 WHERE 1 = 1
+		<!--
+			새 접수 찾기 화면이므로 아직 기사를 못 정한 접수만
+			(접수대기 REQ_01 / 견적중 REQ_02 / 긴급접수 REQ_99).
+
+			REQ_99 를 2026-09-02 에 넣었다. COMMON_CODE 에 긴급접수 코드가
+			생겼는데 이 조건에 없어서, 긴급으로 등록된 접수가 기사 목록에
+			아예 안 뜨는 상태였다. 긴급인데 제일 안 보이는 셈이었다.
+
+			주의 — REQ_99 는 "진행 단계" 가 아니라 "긴급 여부" 를 상태 칸에
+			담은 것이라, 접수대기·견적중과 같은 줄에 있으면 안 되는 값이다.
+			상태 컬럼이 하나뿐이라 긴급 접수는 견적이 들어와도 견적중으로
+			넘어가지 못한다(넘기면 긴급이라는 사실이 사라진다).
+			제대로 하려면 IS_URGENT 같은 별도 컬럼이 필요하다.
+		-->
+		AND r.STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+		<include refid="fixerScope"/>
+
+		<if test="categoryCode != null and categoryCode != ''">
+			AND r.CATEGORY_CODE = #{categoryCode}
+		</if>
+
+		<!--
+			검색어는 반드시 #{} 로 넘긴다.
+			${} 를 쓰면 사용자가 넣은 글자가 SQL 문장에 그대로 붙어서
+			SQL 인젝션이 된다.
+		-->
+		<if test="keyword != null and keyword != ''">
+			AND (r.TITLE   LIKE '%' || #{keyword} || '%'
+			  OR r.CONTENT LIKE '%' || #{keyword} || '%')
+		</if>
+
+		 ORDER BY r.CREATED_AT DESC, r.REQUEST_ID DESC
+	</select>
+
+
+	<select id="selectRequestDetail"
+	        resultType="com.surit.common.request.model.dto.RequestDTO">
+		<include refid="baseColumns"/>
+		 WHERE r.REQUEST_ID = #{requestId}
+		<!--
+			둘 중 하나면 상세를 볼 수 있다.
+			  1) 아직 기사를 못 정한 접수 (접수대기 / 견적중 / 긴급접수)
+			  2) 내가 이미 견적을 낸 접수 — 매칭완료/수리완료로 바뀌어도
+			     "내 견적" 목록에서 눌러 들어갈 수 있어야 한다.
+			이 조건은 상세에만 넣는다. 목록(selectNearbyRequests)에까지 넣으면
+			이미 끝난 접수가 "새 접수 찾기" 화면에 다시 나타나 버린다.
+
+			REQ_99 는 목록과 같은 이유로 2026-09-02 에 추가했다.
+			목록에만 넣고 여기 빠뜨리면 "목록에는 뜨는데 눌러도 안 열리는"
+			상태가 된다. 두 조건은 항상 같이 고쳐야 한다.
+		-->
+		AND (
+			r.STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+			OR EXISTS (
+				SELECT 1
+				  FROM ESTIMATES e
+				 WHERE e.REQUEST_ID = r.REQUEST_ID
+				   AND e.FIXER_NO   = #{userNo}
+			)
+		)
+		<include refid="fixerScope"/>
+	</select>
+
+
+	<select id="selectPhotos"
+	        resultType="com.surit.common.request.model.dto.RequestPhotoDTO">
+		SELECT PHOTO_ID,
+		       REQUEST_ID,
+		       PHOTO_PATH,
+		       PHOTO_TYPE,
+		       PHOTO_ORDER,
+		       CREATED_AT
+		  FROM REPAIR_PHOTO
+		 WHERE REQUEST_ID = #{requestId}
+		 ORDER BY PHOTO_ORDER, PHOTO_ID
+	</select>
+
+
+	<select id="findByUserId"
+	        resultType="com.surit.common.request.model.dto.RequestDTO">
+		SELECT r.REQUEST_ID      AS requestId,
+		       r.USER_NO         AS userNo,
+		       r.CATEGORY_CODE   AS categoryCode,
+		       cc.CODE_NAME      AS categoryName,
+		       r.TITLE           AS title,
+		       r.CONTENT         AS content,
+		       r.SERVICE_ADDRESS AS serviceAddress,
+		       r.STATUS_CODE     AS statusCode,
+		       sc.CODE_NAME      AS statusName,
+		       r.CREATED_AT      AS createdAt,
+		       (SELECT COUNT(*)
+		          FROM ESTIMATES e
+		         WHERE e.REQUEST_ID = r.REQUEST_ID) AS estimateCount
+		  FROM REPAIR_REQUESTS r
+		  LEFT JOIN COMMON_CODE cc ON cc.CODE_ID   = r.CATEGORY_CODE
+		                          AND cc.CODE_GROUP = 'CATEGORY'
+		                          AND cc.USE_YN     = 'Y'
+		  LEFT JOIN COMMON_CODE sc ON sc.CODE_ID   = r.STATUS_CODE
+		                          AND sc.CODE_GROUP = 'STATUS'
+		                          AND sc.USE_YN     = 'Y'
+		 WHERE r.USER_NO = #{userId}
+		 ORDER BY r.CREATED_AT DESC
+	</select>
+
+
+	<!-- 고객 기준 접수 단건 조회 (내 접수가 아니면 결과 없음 -> null) -->
+	<select id="selectRequestForCustomer"
+	        resultType="com.surit.common.request.model.dto.RequestDTO">
+		SELECT r.REQUEST_ID      AS requestId,
+		       r.USER_NO         AS userNo,
+		       r.CATEGORY_CODE   AS categoryCode,
+		       cc.CODE_NAME      AS categoryName,
+		       r.TITLE           AS title,
+		       r.CONTENT         AS content,
+		       r.SERVICE_ADDRESS AS serviceAddress,
+		       r.STATUS_CODE     AS statusCode,
+		       sc.CODE_NAME      AS statusName,
+		       r.CREATED_AT      AS createdAt
+		  FROM REPAIR_REQUESTS r
+		  LEFT JOIN COMMON_CODE cc ON cc.CODE_ID   = r.CATEGORY_CODE
+		                          AND cc.CODE_GROUP = 'CATEGORY'
+		                          AND cc.USE_YN     = 'Y'
+		  LEFT JOIN COMMON_CODE sc ON sc.CODE_ID   = r.STATUS_CODE
+		                          AND sc.CODE_GROUP = 'STATUS'
+		                          AND sc.USE_YN     = 'Y'
+		 WHERE r.REQUEST_ID = #{requestId}
+		   AND r.USER_NO    = #{userNo}
+	</select>
+
+
+	<!-- 특정 접수에 들어온 견적 목록 (기사 이름 포함) -->
+	<select id="selectEstimatesByRequestId"
+	        resultType="com.surit.fixer.estimate.model.dto.EstimateDTO">
+		SELECT e.ESTIMATE_ID        AS estimateId,
+		       e.REQUEST_ID         AS requestId,
+		       e.FIXER_NO           AS fixerNo,
+		       u.NAME               AS fixerName,
+		       e.ESTIMATED_PRICE    AS estimatedPrice,
+		       e.ESTIMATED_DURATION AS estimatedDuration,
+		       e.CONTENT            AS content,
+		       e.STATUS             AS status,
+		       e.CREATED_AT         AS createdAt
+		  FROM ESTIMATES e
+		  LEFT JOIN USERS u ON u.USER_NO = e.FIXER_NO
+		 WHERE e.REQUEST_ID = #{requestId}
+		 ORDER BY e.CREATED_AT ASC
+	</select>
+
+
+	<!--
+		접수 상태 코드 변경 — 범용 구문.
+
+		값도 조건도 없다. 어떤 상태에서든 어떤 값으로든 바뀌고
+		"이 사람 접수가 맞는가" 도 확인하지 않는다.
+		현재 자바 호출부가 없다(2026-09-02 확인).
+
+		쓰지 말 것. 상태 전환은 각자 자기 조건을 가진 구문을 따로 둔다 —
+		EstimateMapper.updateRequestToEstimating (REQ_02),
+		EstimateSelectMapper.updateRequestToMatched (REQ_03),
+		JobMapper.completeJob (REQ_04),
+		cancelCustomerRequest (취소).
+		이걸 가져다 쓰면 그 조건들이 전부 무의미해진다.
+	-->
+	<update id="updateRequestStatus">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = #{statusCode}
+		 WHERE REQUEST_ID = #{requestId}
+	</update>
+
+
+	<!-- 견적 상태 변경 (선택 시 STATUS = 'SELECTED') -->
+	<update id="updateSelectedEstimate">
+		UPDATE ESTIMATES
+		   SET STATUS = 'SELECTED'
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND ESTIMATE_ID = #{estimateId}
+	</update>
+
+
+	<!--
+		STATUS_CODE 를 'REQ_01' 로 박아두지 않고 파라미터로 받는다. (2026-09-02)
+		긴급 신청이면 RequestServiceImpl.createRequest() 가 REQ_99 를 넣어준다.
+
+		NVL 로 감싼 것은 방어다 — 다른 곳에서 상태를 안 채우고 이 구문을 부르면
+		컬럼이 NOT NULL 이라 ORA-01400 이 나는데, 그러느니 접수대기로
+		시작하는 편이 낫다. 어차피 정상 경로는 서비스가 항상 값을 채운다.
+	-->
+	<insert id="insertRequest"
+	        useGeneratedKeys="true"
+	        keyProperty="requestId"
+	        keyColumn="REQUEST_ID">
+		INSERT INTO REPAIR_REQUESTS (
+			USER_NO, CATEGORY_CODE, TITLE, CONTENT,
+			SERVICE_ADDRESS, STATUS_CODE, VISIT_DATE, VISIT_TIME_CODE
+		) VALUES (
+			#{userNo},
+			#{categoryCode},
+			#{title},
+			#{content},
+			#{serviceAddress},
+			NVL(#{statusCode}, 'REQ_01'),
+			CASE WHEN #{visitDate} IS NULL OR #{visitDate} = '' THEN NULL
+			     ELSE TO_DATE(#{visitDate}, 'YYYY-MM-DD') END,
+			#{visitTimeCode}
+		)
+	</insert>
+
+
+	<!--
+		고객 접수 수정 — 아직 기사를 안 정한 상태에서만 수정 가능.
+		(접수대기 REQ_01 / 견적중 REQ_02 / 긴급접수 REQ_99)
+
+		REQ_99 를 2026-09-02 에 추가했다. 없으면 긴급으로 올린 접수는
+		고객이 내용을 고칠 수 없다. 아래 취소 구문도 같은 이유로 함께 고쳤다.
+	-->
+	<update id="updateCustomerRequest"
+	        parameterType="com.surit.common.request.model.dto.RequestDTO">
+		UPDATE REPAIR_REQUESTS
+		   SET CATEGORY_CODE   = #{categoryCode},
+		       TITLE           = #{title},
+		       CONTENT         = #{content},
+		       SERVICE_ADDRESS = #{serviceAddress},
+		       VISIT_DATE      = CASE WHEN #{visitDate} IS NULL OR #{visitDate} = '' THEN NULL
+		                              ELSE TO_DATE(#{visitDate}, 'YYYY-MM-DD') END,
+		       VISIT_TIME_CODE = #{visitTimeCode}
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND USER_NO     = #{userNo}
+		   AND STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+	</update>
+
+
+	<!-- 고객 접수 취소 — 아직 기사를 안 정한 상태에서만 취소 가능 -->
+	<update id="cancelCustomerRequest">
+		UPDATE REPAIR_REQUESTS
+		   SET STATUS_CODE = #{statusCode}
+		 WHERE REQUEST_ID  = #{requestId}
+		   AND USER_NO     = #{userNo}
+		   AND STATUS_CODE IN ('REQ_01', 'REQ_02', 'REQ_99')
+	</update>
+
+
+	<!--
+		selectEstimatesByRequestId 와 거의 같은데, STATUS='SELECTED' 조건만
+		추가돼서 단건(고객이 선택 확정한 견적)만 가져온다.
+	-->
+	<select id="selectSelectedEstimateByRequestId"
+	        resultType="com.surit.fixer.estimate.model.dto.EstimateDTO">
+		SELECT e.ESTIMATE_ID        AS estimateId,
+		       e.REQUEST_ID         AS requestId,
+		       e.FIXER_NO           AS fixerNo,
+		       u.NAME               AS fixerName,
+		       e.ESTIMATED_PRICE    AS estimatedPrice,
+		       e.ESTIMATED_DURATION AS estimatedDuration,
+		       e.CONTENT            AS content,
+		       e.STATUS             AS status,
+		       e.CREATED_AT         AS createdAt
+		  FROM ESTIMATES e
+		  LEFT JOIN USERS u ON u.USER_NO = e.FIXER_NO
+		 WHERE e.REQUEST_ID = #{requestId}
+		   AND e.STATUS     = 'SELECTED'
+	</select>
+
+
+	<insert id="insertPhoto">
+		INSERT INTO REPAIR_PHOTO (
+			REQUEST_ID, PHOTO_PATH, PHOTO_TYPE, PHOTO_ORDER
+		) VALUES (
+			#{requestId}, #{photoPath}, #{photoType}, #{photoOrder}
+		)
+	</insert>
+
+</mapper>
