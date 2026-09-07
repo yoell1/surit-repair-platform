@@ -36,4 +36,4 @@ build/
 uploads/
 
 ### DS_Store 재생성방지 ###
-.DS_Store
+.DS_Store.metadata/
