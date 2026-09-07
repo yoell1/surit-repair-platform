@@ -39,4 +39,8 @@ Java 17 · Spring Boot 3 · MyBatis · Oracle · JSP/JSTL · Spring Security(BCr
 
 팀 전체 테스트케이스 시트입니다 → [수릿 스프레드 시트.xlsx](<수릿 스프레드 시트.xlsx>)
 
-제 담당분은 **「수리기사」 시트 71건**이고, 맨 오른쪽 「이우진 결과」 열이 재검증 후 최종 결과입니다 (Pass 71
+제 담당분은 **「수리기사」 시트 71건**이고, 맨 오른쪽 「이우진 결과」 열이 재검증 후 최종 결과입니다 (Pass 71 · 미실시 0).
+
+## 참고
+
+`uploads/` 폴더와 `application.properties` 는 저장소에 포함하지 않습니다.
