@@ -76,3 +76,5 @@ Java 17 · Spring Boot 3 · MyBatis · Oracle · JSP/JSTL · Spring Security(BCr
 
 `uploads/` 폴더와 `application.properties` 는 저장소에 포함하지 않습니다.
 
+**포트폴리오** — [문제 해결 과정 정리 (Notion)](https://app.notion.com/p/Surit-4-F-14-F-17-3d499fb7397c813da5d6d06e6638b603)
+
