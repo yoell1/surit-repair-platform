@@ -35,6 +35,8 @@ Java 17 · Spring Boot 3 · MyBatis · Oracle · JSP/JSTL · Spring Security(BCr
 2. Oracle 스키마를 생성합니다.
 3. `SuritApplication.java` 를 Spring Boot App 으로 실행 → `http://localhost:8989`
 
-## 참고
+## 테스트
 
-`uploads/` 폴더와 `application.properties` 는 저장소에 포함하지 않습니다.
+팀 전체 테스트케이스 시트입니다 → [수릿 스프레드 시트.xlsx](<수릿 스프레드 시트.xlsx>)
+
+제 담당분은 **「수리기사」 시트 71건**이고, 맨 오른쪽 「이우진 결과」 열이 재검증 후 최종 결과입니다 (Pass 71
